@@ -1,0 +1,137 @@
+---
+title: "Sentiment Analysis Using Syuzchet"
+author: "Devin Teran"
+date: "4/4/2020"
+output: rmdformats::material
+---
+
+# Overview
+This code begins by loading the book, Alice in Wonderland, from the [Gutenburg Project](http://www.gutenberg.org/).  This site has released over 60,000 free books online for the public to read.    
+  
+From there we will analyze the sentiment of each sentence in the book, using the package Syuzhet.  This package will score each sentence with a negative number being a negative sentence and a positive value correlating to a happy or positive sentence.    
+
+  
+```{r setup, include=FALSE}
+library(tidyverse)
+library(syuzhet)
+library(RColorBrewer)
+library(ggplot2)
+library(stopwords)
+library(stringr)
+library(kableExtra)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## First let's import the book's text directly from the website:  
+```{r read-data}
+alice_text_raw <- get_text_as_string('http://www.gutenberg.org/files/11/11-0.txt')
+
+substring(alice_text_raw,1,2000)
+```
+
+## Cleaning Text 
+The text from the e-book contains some extra words including a table of contents and a conclusion after the book about the Gutenburg Project.  We will remove both of these sections in order to complete our sentiment analysis.  
+  
+* Remove large portion of text at end of string after the book, which detailed Gutenburg project  
+* Remove the first few lines which contain table of contents and publishing information  
+* Make dataframe with Sentence Number and Chapter Number  
+
+```{r cleaning-sentence-df,warning=FALSE}
+#Delete end text talking about Gutenburg project
+alice_split <- str_split(alice_text_raw,"  THE END      ")
+alice_text <- alice_split[[1]][1]
+
+alice_sentences_raw <- get_sentences(alice_text)
+
+#Delete first few sentences containing table of contents & publishing info
+alice_sentences <- alice_sentences_raw[14:length(alice_sentences_raw)]
+
+#Add additional columns
+alice_df <- as.data.frame(alice_sentences)
+alice_df$sentence_number <- seq.int(nrow(alice_df))                           #Sentence number
+alice_df$sentiment_score <- get_sentiment(alice_sentences, method="syuzhet")  #Sentence sentiment value
+alice_df$sentiment_word  <- if(alice_df$sentiment_score > 0){'positive'}else if(alice_df$sentiment_score == 0){'neutral'}else{'negative'}
+
+#Get the chapter using regular expressions
+alice_df <- alice_df %>%
+            mutate(chapter = as.double(cumsum(str_detect(alice_sentences, regex("CHAPTER [\\divxlc.$]", 
+                                                 ignore_case = TRUE)))))
+
+
+kable(head(alice_df)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% scroll_box(width = "100%")  
+```
+```{r most-frequent-words}
+alice_tokens <- get_tokens(paste(alice_df$alice_sentences,collapse = " "))
+
+alice_words <- as.data.frame(alice_tokens)
+colnames(alice_words) <- c('word')
+
+#Remove stop words
+
+stopwords <- tidytext::get_stopwords(language = "en",source = "smart")
+stopwords <- bind_rows(tibble(word = c("t","s","i","like","tm","ll"), 
+                              lexicon = c("custom","custom","custom","custom","custom","custom")), 
+                              stopwords)
+
+alice_words <- alice_words %>%
+               anti_join(stopwords, by= c("word" = "word"))
+
+word_count <- alice_words %>%
+  count(word,sort = TRUE) %>%
+  arrange(-n)
+
+head(word_count,15) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  coord_flip() +
+  ggtitle("Most Frequently Used Words") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ylab("Count")
+  
+```
+
+## Analysis  
+Here we see the sentiment analysis over the entire book.  It is clear, there is a lot of movement from negative to positive emotions in the section of the book.  Something really terrible looks to happen twice in the end of the book.  
+```{r sentence-sentiment-entire-book}
+ggplot(alice_df,aes(x=sentence_number,y=sentiment_score)) +
+  geom_line() +
+  ggtitle("Sentence Sentiment Over Entire Book - Alice in Wonderland") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  xlab("Sentence #") + 
+  ylab("Sentence Sentiment")
+  
+```
+
+```{r choose-color-seq,include=FALSE}
+display.brewer.all(n=NULL,type='seq',colorblindFriendly=TRUE)
+```
+
+Since there are many chapters, we will look at the sentiment over each chapter individually.  Chapter 12, the final chapter has the most drastic negative to positive movement back and forth.  Chapter 1 appears to have some positive spikes in text.  Also, there appear to be some negative spans at the end of Chapter 2.
+```{r sentence-sentiment-by-chapter}
+ggplot(alice_df,aes(x=sentence_number,y=sentiment_score,color=chapter)) +
+  geom_line() +
+  ggtitle("Sentence Sentiment Per Chapter - Alice in Wonderland") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  xlab("Sentence #") + 
+  ylab("Sentence Sentiment") +
+  facet_wrap(~chapter,scales = "free_x")
+
+```
+
+Although I haven't seen Alice in Wonderland in a long time, the most negative sentence from chapter 12, I believe is describing a scene where Alice is fleeing away from the Queen who wants to kill her.  The scene is chaotic as she runs for her life while being chased . [See Youtube Video for Movie Scene](https://www.youtube.com/watch?v=8JZmU5jwPIk)
+```{r investigate-ch-16}
+ending_lows <- alice_df %>% filter(chapter == 12) %>% arrange(sentiment_score)
+
+kable(head(ending_lows$alice_sentences,1)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% scroll_box(width = "100%")  
+
+```
+## Conclusion
+It's clear that the story, Alice in Wonderland, has a lot of ups and downs as seen by the sentiment analysis.  With more experience I would like use a more advanced stop word list and a more complex lexicon, which includes negative word combinations (e.g. not happy is known to be a negative phrase).
+
+## Resources:
+
+* Jeckel,Michael. "Introduction to the Syuzhet Package" Cran-R, 13 December 2017, https://cran.r-project.org/web/packages/syuzhet/vignettes/syuzhet-vignette.html.  
+* Silge, Julia and Robinson, David. *Text Mining with R: A Tidy Approach*, O'Reilly Media, 2017.  
+
